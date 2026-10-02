@@ -1,0 +1,24 @@
+name: EPEX goedkoopste uren
+
+on:
+  schedule:
+    - cron: "15 11 * * *"   # 13:15 zomertijd / 12:15 wintertijd; script wacht tot data er is
+  workflow_dispatch:
+    inputs:
+      day_offset:
+        description: "1 = morgen, 0 = vandaag (test)"
+        default: "1"
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python epex_push.py
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DAY_OFFSET: ${{ github.event.inputs.day_offset || '1' }}
