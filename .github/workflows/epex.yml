@@ -2,7 +2,7 @@ name: EPEX goedkoopste uren
 
 on:
   schedule:
-    - cron: "15 11 * * *"   # 13:15 zomertijd / 12:15 wintertijd; script wacht tot data er is
+    - cron: "5 14 * * *"   # 16:05 zomertijd. In de wintertijd: "5 15 * * *"
   workflow_dispatch:
     inputs:
       day_offset:
