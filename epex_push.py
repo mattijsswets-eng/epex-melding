@@ -17,6 +17,7 @@ sys.stdout.reconfigure(line_buffering=True)  # logregels direct tonen in GitHub
 _opener = urllib.request.build_opener()
 _opener.addheaders = [("User-Agent", "Mozilla/5.0 (epex-melding)")]  # sommige sites weigeren Python
 urllib.request.install_opener(_opener)
+
 TZ = ZoneInfo("Europe/Amsterdam")
 HOURS = 8   # lengte van het blok dat de app eist
 RUN = int(os.environ.get("RUN_HOURS", "4"))  # uren dat de boiler echt stookt
@@ -44,18 +45,34 @@ def _to_hourly(points, s0, s1):
     return [(h, sum(buckets[h]) / len(buckets[h])) for h in hours]
 
 
+FRANK_URLS = ["https://graphql.frankenergie.nl/", "https://www.frankenergie.nl/graphql",
+              "https://frank-graphql-prod.graphcdn.app/"]
+
+
 def fetch_frank(start, end):
-    """Zelfde bron als de Frank-app. marketPrice is EUR/kWh excl. btw."""
-    query = """query($startDate: Date!, $endDate: Date!) {
-      marketPricesElectricity(startDate: $startDate, endDate: $endDate) { from marketPrice } }"""
-    payload = json.dumps({"query": query, "variables": {
-        "startDate": start.date().isoformat(), "endDate": end.date().isoformat()}}).encode()
-    req = urllib.request.Request("https://frank-api.nl/graphql", data=payload,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        rows = json.load(r)["data"]["marketPricesElectricity"]
-    return [(int(datetime.fromisoformat(x["from"].replace("Z", "+00:00")).timestamp()),
-             x["marketPrice"] * 1000) for x in rows]
+    """Zelfde bron als de Frank-app (nieuwe API sinds aug 2026). marketPrice is EUR/kWh excl. btw."""
+    query = """query MarketPrices($date: String!, $resolution: PriceResolution!) {
+      marketPrices(date: $date, resolution: $resolution) {
+        electricityPrices { from till marketPrice } } }"""
+    payload = json.dumps({"query": query, "operationName": "MarketPrices", "variables": {
+        "date": start.date().isoformat(), "resolution": "PT15M"}}).encode()
+    fouten = []
+    for url in FRANK_URLS:
+        try:
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                resp = json.load(r)
+            data = (resp.get("data") or {}).get("marketPrices") or {}
+            rows = data.get("electricityPrices") or []
+            if not rows:
+                fouten.append(f"{url}: {resp.get('errors') or 'geen prijzen'}")
+                continue
+            factor = 1 if max(abs(x["marketPrice"]) for x in rows) > 5 else 1000  # naar EUR/MWh
+            return [(int(datetime.fromisoformat(x["from"].replace("Z", "+00:00")).timestamp()),
+                     x["marketPrice"] * factor) for x in rows]
+        except Exception as e:
+            fouten.append(f"{url}: {e}")
+    raise RuntimeError(" | ".join(fouten))
 
 
 def fetch_energycharts(start, end):
