@@ -11,7 +11,12 @@ import urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+import sys
 
+sys.stdout.reconfigure(line_buffering=True)  # logregels direct tonen in GitHub
+_opener = urllib.request.build_opener()
+_opener.addheaders = [("User-Agent", "Mozilla/5.0 (epex-melding)")]  # sommige sites weigeren Python
+urllib.request.install_opener(_opener)
 TZ = ZoneInfo("Europe/Amsterdam")
 HOURS = 8   # lengte van het blok dat de app eist
 RUN = int(os.environ.get("RUN_HOURS", "4"))  # uren dat de boiler echt stookt
