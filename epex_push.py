@@ -2,7 +2,7 @@
 moet programmeren. De boiler stookt aan het begin van het blok (RUN uur), dus het blok
 begint bij de goedkoopste RUN aaneengesloten uren. Omdat de boiler buitenlucht gebruikt,
 wordt de prijs gecorrigeerd voor de COP op basis van de verwachte buitentemperatuur.
-Bronnen: Energy-Charts (EPEX day-ahead NL), Open-Meteo (temperatuur Rotterdam)."""
+Bronnen: Frank Energie (EPEX day-ahead NL, met Energy-Charts als reserve), Open-Meteo (temperatuur)."""
 import json
 import os
 import time
@@ -25,22 +25,54 @@ OPSLAG = float(os.environ.get("OPSLAG_CT", "13"))
 DAGEN = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
 
-def fetch_hourly(day):
-    start = datetime(day.year, day.month, day.day, tzinfo=TZ)
-    end = start + timedelta(days=1)
-    q = urllib.parse.urlencode({"bzn": "NL", "start": start.isoformat(), "end": end.isoformat()})
-    with urllib.request.urlopen(f"https://api.energy-charts.info/price?{q}", timeout=30) as r:
-        data = json.load(r)
-    s0, s1 = int(start.timestamp()), int(end.timestamp())
+def _to_hourly(points, s0, s1):
+    """points: lijst (unix_ts, prijs in EUR/MWh). Middelt kwartieren naar uren; None als de dag niet compleet is."""
     buckets = defaultdict(list)
-    for ts, p in zip(data.get("unix_seconds", []), data.get("price", [])):
+    for ts, p in points:
         if p is not None and s0 <= ts < s1:
             buckets[ts - ts % 3600].append(p)
     expected = (s1 - s0) // 3600  # 23, 24 of 25 bij zomer/wintertijd
     hours = sorted(buckets)
     if len(hours) < expected:
+        print(f"Onvolledig: {len(hours)} van {expected} uur")
         return None
     return [(h, sum(buckets[h]) / len(buckets[h])) for h in hours]
+
+
+def fetch_frank(start, end):
+    """Zelfde bron als de Frank-app. marketPrice is EUR/kWh excl. btw."""
+    query = """query($startDate: Date!, $endDate: Date!) {
+      marketPricesElectricity(startDate: $startDate, endDate: $endDate) { from marketPrice } }"""
+    payload = json.dumps({"query": query, "variables": {
+        "startDate": start.date().isoformat(), "endDate": end.date().isoformat()}}).encode()
+    req = urllib.request.Request("https://frank-api.nl/graphql", data=payload,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        rows = json.load(r)["data"]["marketPricesElectricity"]
+    return [(int(datetime.fromisoformat(x["from"].replace("Z", "+00:00")).timestamp()),
+             x["marketPrice"] * 1000) for x in rows]
+
+
+def fetch_energycharts(start, end):
+    q = urllib.parse.urlencode({"bzn": "NL", "start": start.isoformat(), "end": end.isoformat()})
+    with urllib.request.urlopen(f"https://api.energy-charts.info/price?{q}", timeout=30) as r:
+        data = json.load(r)
+    return list(zip(data.get("unix_seconds", []), data.get("price", [])))
+
+
+def fetch_hourly(day):
+    start = datetime(day.year, day.month, day.day, tzinfo=TZ)
+    end = start + timedelta(days=1)
+    s0, s1 = int(start.timestamp()), int(end.timestamp())
+    for name, fn in (("Frank", fetch_frank), ("Energy-Charts", fetch_energycharts)):
+        try:
+            hourly = _to_hourly(fn(start, end), s0, s1)
+            if hourly:
+                print("Prijzen via", name)
+                return hourly
+        except Exception as e:
+            print(f"{name} mislukt:", e)
+    return None
 
 
 def fetch_temps(day, hours_ts):
