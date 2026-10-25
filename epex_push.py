@@ -159,6 +159,7 @@ def main():
         ]
         if temps:
             lines.append(f"Buitentemp tijdens stoken: gem {sum(temps[i:i + RUN]) / RUN:.0f} °C")
+            lines.append(f"Buitentemp etmaal: gem {sum(temps) / len(temps):.0f} °C")
             if j != i:
                 lines.append(f"(Alleen op prijs was {fmt(ts[j])} gekozen; door COP nu {fmt(ts[i])})")
         else:
