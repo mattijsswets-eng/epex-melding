@@ -28,9 +28,9 @@ COP_PER_GRAAD = float(os.environ.get("COP_PER_GRAAD", "0.025"))  # COP stijgt ~2
 # Vaste opslag per kWh incl. btw (energiebelasting + inkoopvergoeding leverancier).
 # Telt mee omdat je die ook betaalt per kWh, en een betere COP bespaart dus ook daarop.
 OPSLAG = float(os.environ.get("OPSLAG_CT", "13"))
-# Verwarmingsadvies op basis van de all-in daggemiddelde prijs (ct/kWh, incl. belasting)
-GOEDKOOP = float(os.environ.get("GOEDKOOP_CT", "22"))
-DUUR = float(os.environ.get("DUUR_CT", "35"))
+# Verwarmingsadvies: morgen vergeleken met het gemiddelde van de afgelopen HISTORIE dagen.
+HISTORIE = int(os.environ.get("HISTORIE_DAGEN", "14"))
+MARGE = float(os.environ.get("MARGE_PROCENT", "15")) / 100  # zoveel % boven/onder = duur/goedkoop
 DAGEN = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
 
@@ -43,7 +43,6 @@ def _to_hourly(points, s0, s1):
     expected = (s1 - s0) // 3600  # 23, 24 of 25 bij zomer/wintertijd
     hours = sorted(buckets)
     if len(hours) < expected:
-        print(f"Onvolledig: {len(hours)} van {expected} uur")
         return None
     return [(h, sum(buckets[h]) / len(buckets[h])) for h in hours]
 
@@ -85,7 +84,7 @@ def fetch_energycharts(start, end):
     return list(zip(data.get("unix_seconds", []), data.get("price", [])))
 
 
-def fetch_hourly(day):
+def fetch_hourly(day, stil=False):
     start = datetime(day.year, day.month, day.day, tzinfo=TZ)
     end = start + timedelta(days=1)
     s0, s1 = int(start.timestamp()), int(end.timestamp())
@@ -93,10 +92,12 @@ def fetch_hourly(day):
         try:
             hourly = _to_hourly(fn(start, end), s0, s1)
             if hourly:
-                print("Prijzen via", name)
+                if not stil:
+                    print("Prijzen via", name)
                 return hourly
         except Exception as e:
-            print(f"{name} mislukt:", e)
+            if not stil:
+                print(f"{name} mislukt:", e)
     return None
 
 
@@ -125,6 +126,19 @@ def best_start(prices):
     """Startuur waarbij de eerste RUN uren het goedkoopst zijn en het blok van 8 nog in de dag past."""
     n = len(prices)
     return min(range(n - HOURS + 1), key=lambda i: sum(prices[i:i + RUN]))
+
+
+def referentie(day):
+    """Gemiddelde all-in prijs (ct/kWh) over de afgelopen HISTORIE dagen; None als dat niet lukt."""
+    gemiddelden = []
+    for k in range(1, HISTORIE + 1):
+        h = fetch_hourly(day - timedelta(days=k), stil=True)
+        if h:
+            gemiddelden.append(sum(p / 10 * 1.21 + OPSLAG for _, p in h) / len(h))
+    if len(gemiddelden) < HISTORIE // 2:
+        print(f"Te weinig historie: {len(gemiddelden)} dagen")
+        return None
+    return sum(gemiddelden) / len(gemiddelden)
 
 
 def fmt(ts):
@@ -169,17 +183,22 @@ def main():
             lines.append("Geen temperatuurdata, gekozen op prijs alleen")
         lines.append(f"Daggemiddelde: {sum(ct) / len(ct):.1f} ct")
         lines.append("(kale EPEX-prijs, excl. belasting)")
-        # Verwarmingsadvies
-        allin = [p * 1.21 + OPSLAG for p in ct]
-        dag = sum(allin) / len(allin)
-        if dag < GOEDKOOP:
-            advies = "goedkope dag, ruim stoken mag"
-        elif dag > DUUR:
-            advies = "dure dag, thermostaat 1 graad lager"
+        # Verwarmingsadvies: all-in daggemiddelde t.o.v. de afgelopen weken
+        dag = sum(p * 1.21 + OPSLAG for p in ct) / len(ct)
+        ref = referentie(day)
+        if ref:
+            afw = dag / ref - 1
+            if afw > MARGE:
+                advies = "dure dag, thermostaat 1 graad lager"
+            elif afw < -MARGE:
+                advies = "goedkope dag, ruim stoken mag"
+            else:
+                advies = "normale dag"
+            lines.append(f"Verwarming: {advies}")
+            lines.append(f"(all-in gem {dag:.0f} ct, {afw:+.0%} t.o.v. {ref:.0f} ct afgelopen {HISTORIE} dagen)")
         else:
-            advies = "normale dag"
+            lines.append(f"Verwarming: all-in gem {dag:.0f} ct (geen vergelijking beschikbaar)")
         d = max(range(len(ct) - 2), key=lambda k: sum(ct[k:k + 3]))
-        lines.append(f"Verwarming: {advies} (all-in gem {dag:.0f} ct)")
         lines.append(f"Duurste uren: {fmt(ts[d])}-{fmt(ts[d + 2] + 3600)}, airco dan lager")
         body = "\n".join(lines)
         title = f"Boiler {DAGEN[day.weekday()]} {day.day}-{day.month}"
