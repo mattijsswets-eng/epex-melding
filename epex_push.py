@@ -28,6 +28,9 @@ COP_PER_GRAAD = float(os.environ.get("COP_PER_GRAAD", "0.025"))  # COP stijgt ~2
 # Vaste opslag per kWh incl. btw (energiebelasting + inkoopvergoeding leverancier).
 # Telt mee omdat je die ook betaalt per kWh, en een betere COP bespaart dus ook daarop.
 OPSLAG = float(os.environ.get("OPSLAG_CT", "13"))
+# Verwarmingsadvies op basis van de all-in daggemiddelde prijs (ct/kWh, incl. belasting)
+GOEDKOOP = float(os.environ.get("GOEDKOOP_CT", "22"))
+DUUR = float(os.environ.get("DUUR_CT", "35"))
 DAGEN = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
 
@@ -166,6 +169,18 @@ def main():
             lines.append("Geen temperatuurdata, gekozen op prijs alleen")
         lines.append(f"Daggemiddelde: {sum(ct) / len(ct):.1f} ct")
         lines.append("(kale EPEX-prijs, excl. belasting)")
+        # Verwarmingsadvies
+        allin = [p * 1.21 + OPSLAG for p in ct]
+        dag = sum(allin) / len(allin)
+        if dag < GOEDKOOP:
+            advies = "goedkope dag, ruim stoken mag"
+        elif dag > DUUR:
+            advies = "dure dag, thermostaat 1 graad lager"
+        else:
+            advies = "normale dag"
+        d = max(range(len(ct) - 2), key=lambda k: sum(ct[k:k + 3]))
+        lines.append(f"Verwarming: {advies} (all-in gem {dag:.0f} ct)")
+        lines.append(f"Duurste uren: {fmt(ts[d])}-{fmt(ts[d + 2] + 3600)}, airco dan lager")
         body = "\n".join(lines)
         title = f"Boiler {DAGEN[day.weekday()]} {day.day}-{day.month}"
 
