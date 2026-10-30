@@ -200,6 +200,8 @@ def main():
             lines.append(f"Verwarming: all-in gem {dag:.0f} ct (geen vergelijking beschikbaar)")
         d = max(range(len(ct) - 2), key=lambda k: sum(ct[k:k + 3]))
         lines.append(f"Duurste uren: {fmt(ts[d])}-{fmt(ts[d + 2] + 3600)}, airco dan lager")
+        w = min(range(len(ct) - 2), key=lambda k: sum(ct[k:k + 3]))
+        lines.append(f"Wasmachine/vaatwasser: {fmt(ts[w])}-{fmt(ts[w + 2] + 3600)}, gem {sum(ct[w:w + 3]) / 3:.1f} ct")
         body = "\n".join(lines)
         title = f"Boiler {DAGEN[day.weekday()]} {day.day}-{day.month}"
 
